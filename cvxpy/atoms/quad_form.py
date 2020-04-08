@@ -17,6 +17,7 @@ limitations under the License.
 from __future__ import division
 
 import warnings
+from functools import lru_cache, wraps
 
 import numpy as np
 from scipy import linalg as LA
@@ -150,6 +151,7 @@ class SymbolicQuadForm(Atom):
         return True
 
 
+@cache_sparse()
 def decomp_quad(P, cond=None, rcond=None, lower=True, check_finite=True):
     """
     Compute a matrix decomposition.
@@ -223,3 +225,30 @@ def quad_form(x, P):
         raise Exception(
             "At least one argument to quad_form must be non-variable."
         )
+
+
+def cache_sparse(*args, **kwargs):
+    def decorator(function):
+        @wraps(function)
+        def wrapper(sc_matrix, *args, **kwargs):
+            hashable_matrix = (
+                tuple([(i, j, sc_matrix[i, j]) for i, j in zip(*sc_matrix.nonzero())]), sc_matrix.shape
+                )
+            return cached_wrapper(hashable_matrix, *args, **kwargs)
+        
+        @lru_cache(*args, **kwargs)
+        def cached_wrapper(hashable_matrix, *args, **kwargs):
+            row = [element[0] for element in hashable_matrix[0]]
+            col = [element[1] for element in hashable_matrix[0]]
+            data = [element[2] for element in hashable_matrix[0]]
+            shape = hashable_matrix[1]
+
+            sc_matrix = sp.csr_matrix((data, (row, col)), shape=shape)
+            return function(sc_matrix, *args, **kwargs)
+        
+        # copy lru_cache attributes over too
+        wrapper.cache_info = cached_wrapper.cache_info
+        wrapper.cache_clear = cached_wrapper.cache_clear
+        return wrapper
+    return decorator
+
